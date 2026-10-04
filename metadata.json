@@ -1,0 +1,6 @@
+{
+  "name": "RiskGuard AI — Risk, Fraud & Regulatory Intelligence Copilot",
+  "description": "Autonomous Risk Scoring, Real-time Fraud Anomaly Detection & Regulatory Compliance Copilot with RAG citation verification, SAR narrative drafting, and human-in-the-loop decision triage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

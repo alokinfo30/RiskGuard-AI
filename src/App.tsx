@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header, ActiveTab } from './components/Header.tsx';
 import { FraudMonitoringQueue } from './components/FraudMonitoringQueue.tsx';
 import { TransactionInspectorModal } from './components/TransactionInspectorModal.tsx';
@@ -9,7 +9,9 @@ import { RegulatoryLibrary } from './components/RegulatoryLibrary.tsx';
 import { AuditGovernanceLog } from './components/AuditGovernanceLog.tsx';
 import { TransactionRecord, DecisionStatus } from './types/index.ts';
 import { INITIAL_TRANSACTIONS } from './data/syntheticTransactions.ts';
-import { ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { AlertConfig } from './components/AlertSettingsPanel.tsx';
+import { playAlertChime } from './utils/audioAlert.ts';
+import { ShieldCheck, CheckCircle2, AlertTriangle, ChevronRight } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('monitoring');
@@ -18,13 +20,38 @@ export default function App() {
   const [sarTx, setSarTx] = useState<TransactionRecord | null>(null);
   const [sarNotes, setSarNotes] = useState<string>('');
   const [isLiveStreaming, setIsLiveStreaming] = useState<boolean>(true);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    isCritical?: boolean;
+    tx?: TransactionRecord;
+  } | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  // Alert settings state
+  const [alertConfig, setAlertConfig] = useState<AlertConfig>(() => {
+    try {
+      const saved = localStorage.getItem('riskguard_alert_config');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      soundEnabled: true,
+      toastEnabled: true,
+      minSeverity: 'CRITICAL',
+      volume: 0.6,
+    };
+  });
+
+  // Save alert config to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('riskguard_alert_config', JSON.stringify(alertConfig));
+    } catch (e) {}
+  }, [alertConfig]);
+
+  const showToast = (text: string, isCritical?: boolean, tx?: TransactionRecord) => {
+    setToastMessage({ text, isCritical, tx });
     setTimeout(() => {
       setToastMessage(null);
-    }, 4000);
+    }, 5000);
   };
 
   // Fetch live transactions from server
@@ -46,6 +73,30 @@ export default function App() {
     fetchTransactions();
   }, []);
 
+  // Alert handler on new transaction arrival
+  const handleNewTransactionAlert = (newTx: TransactionRecord) => {
+    const isCritical = newTx.riskBand === 'CRITICAL' || newTx.riskScore >= 80;
+    const isHigh = newTx.riskBand === 'HIGH' || newTx.riskScore >= 60;
+
+    const meetsThreshold =
+      alertConfig.minSeverity === 'CRITICAL'
+        ? isCritical
+        : isCritical || isHigh;
+
+    if (meetsThreshold) {
+      if (alertConfig.soundEnabled) {
+        playAlertChime(alertConfig.volume);
+      }
+      if (alertConfig.toastEnabled) {
+        showToast(
+          `Critical Alert: ${newTx.id} (${newTx.currency} ${newTx.amount.toLocaleString()}) — ${newTx.fraudFlags[0] ? newTx.fraudFlags[0].replace(/_/g, ' ') : 'High Risk Anomaly'}`,
+          true,
+          newTx
+        );
+      }
+    }
+  };
+
   // Live streaming simulator ticker (ticks every 12 seconds when active)
   useEffect(() => {
     if (!isLiveStreaming) return;
@@ -57,6 +108,7 @@ export default function App() {
           const data = await res.json();
           if (data.transaction) {
             setTransactions((prev) => [data.transaction, ...prev.slice(0, 49)]);
+            handleNewTransactionAlert(data.transaction);
           }
         }
       } catch (err) {
@@ -65,7 +117,7 @@ export default function App() {
     }, 12000);
 
     return () => clearInterval(interval);
-  }, [isLiveStreaming]);
+  }, [isLiveStreaming, alertConfig]);
 
   // Handle manual synthetic injection
   const handleTriggerTick = async () => {
@@ -75,7 +127,7 @@ export default function App() {
         const data = await res.json();
         if (data.transaction) {
           setTransactions((prev) => [data.transaction, ...prev]);
-          showToast(`Simulated influx: Ingested ${data.transaction.id} (${data.transaction.riskBand} Risk)`);
+          handleNewTransactionAlert(data.transaction);
         }
       }
     } catch (e) {
@@ -186,7 +238,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Bar Contract (Wordmark, Nav Links, Profile/Actions) */}
+      {/* Top Bar Contract (Wordmark, Nav Links, Profile/Actions & Alert Settings) */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -194,13 +246,39 @@ export default function App() {
         criticalCount={criticalCount}
         isLiveStreaming={isLiveStreaming}
         setIsLiveStreaming={setIsLiveStreaming}
+        alertConfig={alertConfig}
+        setAlertConfig={setAlertConfig}
       />
 
-      {/* Toast Notification */}
+      {/* Toast / Push Notification Banner */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-indigo-500/40 bg-slate-900/95 px-4 py-3 text-xs font-semibold text-indigo-200 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-          <span>{toastMessage}</span>
+        <div
+          onClick={() => {
+            if (toastMessage.tx) {
+              setSelectedTx(toastMessage.tx);
+              setToastMessage(null);
+            }
+          }}
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 cursor-pointer max-w-md ${
+            toastMessage.isCritical
+              ? 'border-rose-500/60 bg-rose-950/90 text-rose-100 ring-1 ring-rose-500/30'
+              : 'border-indigo-500/40 bg-slate-900/95 text-indigo-200'
+          }`}
+        >
+          {toastMessage.isCritical ? (
+            <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0 animate-bounce" />
+          ) : (
+            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+          )}
+          <div className="flex-1 text-xs">
+            <div className="font-semibold leading-snug">{toastMessage.text}</div>
+            {toastMessage.tx && (
+              <div className="text-[10px] text-rose-300 font-mono pt-0.5 flex items-center gap-1">
+                <span>Click to inspect case immediately</span>
+                <ChevronRight className="h-3 w-3" />
+              </div>
+            )}
+          </div>
         </div>
       )}
 

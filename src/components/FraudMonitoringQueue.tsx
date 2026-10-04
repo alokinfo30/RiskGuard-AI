@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TransactionRecord, DecisionStatus } from '../types/index.ts';
 import { CriticalRiskTrendChart } from './CriticalRiskTrendChart.tsx';
+import { RiskHeatmap } from './RiskHeatmap.tsx';
 import { 
   AlertTriangle, 
   CheckCircle2, 
@@ -17,7 +18,8 @@ import {
   Snowflake,
   X,
   Layers,
-  ShieldCheck
+  BarChart3,
+  Flame
 } from 'lucide-react';
 
 interface FraudMonitoringQueueProps {
@@ -42,6 +44,7 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterBand, setFilterBand] = useState<string>('ALL');
+  const [surveillanceView, setSurveillanceView] = useState<'BOTH' | 'CHART_ONLY' | 'HEATMAP_ONLY'>('BOTH');
 
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -135,10 +138,60 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* 24-Hour Critical Risk Anomaly Frequency Chart (Integrated via Recharts) */}
-      <CriticalRiskTrendChart transactions={transactions} />
+      {/* Surveillance Controls Bar (Toggle between 24h Trend Chart and Risk Heatmap) */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+            Surveillance Visualizers:
+          </span>
+          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+            <button
+              onClick={() => setSurveillanceView('BOTH')}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                surveillanceView === 'BOTH'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              All Views
+            </button>
+            <button
+              onClick={() => setSurveillanceView('CHART_ONLY')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                surveillanceView === 'CHART_ONLY'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <BarChart3 className="h-3 w-3" />
+              <span>24h Trend Chart</span>
+            </button>
+            <button
+              onClick={() => setSurveillanceView('HEATMAP_ONLY')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                surveillanceView === 'HEATMAP_ONLY'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Flame className="h-3 w-3" />
+              <span>Risk Heatmap</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
-      {/* Top Banner & Analytical Metric Cards */}
+      {/* 24-Hour Critical Risk Anomaly Frequency Chart (Integrated via Recharts) */}
+      {(surveillanceView === 'BOTH' || surveillanceView === 'CHART_ONLY') && (
+        <CriticalRiskTrendChart transactions={transactions} />
+      )}
+
+      {/* Risk Heatmap: Location x Hour of Day Heatmap Dashboard Card */}
+      {(surveillanceView === 'BOTH' || surveillanceView === 'HEATMAP_ONLY') && (
+        <RiskHeatmap transactions={transactions} />
+      )}
+
+      {/* Analytical Metric KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-slate-800/80 bg-slate-900/60 p-4">
           <div className="flex items-center justify-between text-xs text-slate-400">
@@ -317,7 +370,7 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
         </div>
       </div>
 
-      {/* High-Density Data Grid with Checkboxes (Compliant with saas_dashboard reference) */}
+      {/* High-Density Data Grid with Checkboxes */}
       <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/60">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">

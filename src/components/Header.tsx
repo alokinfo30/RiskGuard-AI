@@ -1,5 +1,16 @@
-import React from 'react';
-import { ShieldCheck, ShieldAlert, BookOpen, SlidersHorizontal, History, Radio } from 'lucide-react';
+import React, { useState } from 'react';
+import { 
+  ShieldCheck, 
+  ShieldAlert, 
+  BookOpen, 
+  SlidersHorizontal, 
+  History, 
+  Radio, 
+  Bell, 
+  Volume2, 
+  VolumeX 
+} from 'lucide-react';
+import { AlertSettingsPanel, AlertConfig } from './AlertSettingsPanel.tsx';
 import avatarImg from '../assets/images/avatar_compliance_lead_1791140102843.jpg';
 
 export type ActiveTab = 'monitoring' | 'copilot' | 'sandbox' | 'regulations' | 'audit';
@@ -11,6 +22,8 @@ interface HeaderProps {
   criticalCount: number;
   isLiveStreaming: boolean;
   setIsLiveStreaming: React.Dispatch<React.SetStateAction<boolean>>;
+  alertConfig: AlertConfig;
+  setAlertConfig: React.Dispatch<React.SetStateAction<AlertConfig>>;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -20,7 +33,11 @@ export const Header: React.FC<HeaderProps> = ({
   criticalCount,
   isLiveStreaming,
   setIsLiveStreaming,
+  alertConfig,
+  setAlertConfig,
 }) => {
+  const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
@@ -105,11 +122,11 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         </nav>
 
-        {/* Zone 3: 1-2 primary actions & analyst presence */}
-        <div className="flex items-center gap-3">
+        {/* Zone 3: Actions, Alert Settings & Analyst Profile */}
+        <div className="flex items-center gap-2.5">
           {/* Stream control toggle */}
           <button
-            onClick={() => setIsLiveStreaming(prev => !prev)}
+            onClick={() => setIsLiveStreaming((prev) => !prev)}
             className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all ${
               isLiveStreaming
                 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
@@ -119,12 +136,40 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Radio className={`h-3 w-3 ${isLiveStreaming ? 'animate-pulse text-emerald-400' : 'text-slate-500'}`} />
             <span className="hidden sm:inline font-mono text-[11px]">
-              {isLiveStreaming ? 'LIVE STREAM' : 'STREAM PAUSED'}
+              {isLiveStreaming ? 'STREAMING' : 'PAUSED'}
             </span>
           </button>
 
+          {/* Alert Settings Trigger Button */}
+          <div className="relative">
+            <button
+              onClick={() => setIsAlertSettingsOpen((prev) => !prev)}
+              className={`relative flex items-center justify-center h-8 w-8 rounded-lg border transition-colors ${
+                isAlertSettingsOpen
+                  ? 'border-indigo-500 bg-indigo-600/20 text-indigo-300'
+                  : alertConfig.soundEnabled
+                  ? 'border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700'
+                  : 'border-slate-800 bg-slate-900/60 text-slate-500 hover:text-slate-300'
+              }`}
+              title="Alert & Sound Notification Configuration"
+            >
+              <Bell className="h-4 w-4" />
+              {alertConfig.soundEnabled && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-slate-950" />
+              )}
+            </button>
+
+            {/* Alert Settings Dropdown Flyout Panel */}
+            <AlertSettingsPanel
+              isOpen={isAlertSettingsOpen}
+              onClose={() => setIsAlertSettingsOpen(false)}
+              config={alertConfig}
+              onChangeConfig={setAlertConfig}
+            />
+          </div>
+
           {/* Compliance Officer Profile */}
-          <div className="flex items-center gap-2.5 pl-2 border-l border-slate-800">
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
             <img
               src={avatarImg}
               alt="Compliance Officer"

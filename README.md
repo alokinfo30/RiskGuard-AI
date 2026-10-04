@@ -22,7 +22,7 @@ RiskGuard AI operates two synchronized pipelines:
      │ • Multi-Factor Anomaly Scoring    │      │ • FinCEN, FATF, PMLA, GDPR Store │
      │ • Balance Drain Detection         │      │ • Strict Statutory Citations     │
      │ • SHAP Factor Weight Impact       │      │ • Gemini 3.8 Flash Copilot       │
-     │ • Real-time Recharts 24h Trend    │      │ • Automated SAR Part V Drafter   │
+     │ • Recharts 24h Trend & Heatmap    │      │ • Automated SAR Part V Drafter   │
      └─────────────────┬─────────────────┘      └─────────────────┬────────────────┘
                        │                                          │
                        └─────────────────────┬────────────────────┘
@@ -47,6 +47,15 @@ RiskGuard AI operates two synchronized pipelines:
   - Dual-series display: **Critical Risk** (solid crimson curve) and **High Risk** (dashed orange curve).
   - Dynamic statutory surge threshold reference line ($8\text{ alerts/hour}$) to catch off-hours money laundering bursts.
   - KPI summary strip: Aggregated 24h volume, peak anomaly hour, baseline alert limits, and current threat state.
+- **Risk Heatmap (Spatio-Temporal Density Radar)**:
+  - Visualizes transaction density and anomaly concentration across key financial corridors (US, Germany, India, Cyprus, Netherlands, UAE, Romania, UK) and 6 diurnal time blocks across the day.
+  - Dynamic color scale indicating risk density from zero to critical surge levels.
+  - Interactive cell inspection displaying volume in USD, critical risk counts, and top detected flags.
+- **Real-Time Alert Dispatcher & Synthesizer Chimes**:
+  - Accessible via the header bell icon with persistent configuration in `localStorage`.
+  - Web Audio API dual-tone synthesized alert chime on incoming Critical transactions (zero external audio dependencies).
+  - Direct push notification toast banners allowing instant one-click jump into the case inspection drawer.
+  - Configurable sensitivity threshold (Critical only vs High & Critical) and chime volume.
 - **Multi-Select Bulk Adjudication**:
   - Analysts can select multiple transactions across the queue via row checkboxes or the master header toggle.
   - Docked batch toolbar with cumulative financial value calculation.
@@ -88,6 +97,7 @@ RiskGuard AI operates two synchronized pipelines:
 - **Backend**: Node.js & Express (`server.ts`) with `@google/genai` (Gemini 3.8 Flash), handling RAG legal search, SAR drafting, and bulk decision logging.
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS 4.
 - **Charts & Visualization**: Recharts (ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine).
+- **Audio Synthesizer**: Web Audio API oscillator synthesis for low-latency acoustic alerting.
 - **Icons**: Lucide React.
 - **Typography**: Plus Jakarta Sans & JetBrains Mono (tabular figures for financial precision).
 

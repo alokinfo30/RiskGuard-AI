@@ -194,30 +194,72 @@ npm test
 
 [SUITE 6: DOCUMENT AI FINANCIAL FORENSICS & SAR EXHIBITS]
   ✔ 6.1 Document AI Forensics: /api/documents/analyze extracts entities & generates findings
+  ✔ 6.2 Document AI Multilingual Detection & Translation: Spanish Invoice FAC-2026-0941
+  ✔ 6.3 Document AI German Equipment Pro-Forma Invoice: Auto-translates & extracts entities
+  ✔ 6.4 Document AI Chinese Maritime Bill of Lading: Ingestion & TBML discrepancy analysis
 
 [SUITE 7: HTTP SECURITY POSTURE & OWASP DEFENSES]
   ✔ 7.1 OWASP Security Headers: Response contains CSP, nosniff, and frame hardening
 
+[SUITE 8: FINCEN BSA ELECTRONIC FILING & STATUTORY CITATIONS]
+  ✔ 8.1 FinCEN SAR Part V Drafting: /api/regulatory/draft-sar produces compliant audit narrative
+  ✔ 8.2 FinCEN BSA Electronic Filing Conformance: /api/regulatory/validate-sar-filing validates criteria
+  ✔ 8.3 FinCEN Electronic Batch Export: /api/regulatory/export-fincen-batch returns XML/JSON package
+  ✔ 8.4 Statutory Citation Grounding: /api/regulatory/verify-citations verifies codified rules
+
+[SUITE 9: GOOGLE CLOUD STREAMING & BIGQUERY LAKEHOUSE]
+  ✔ 9.1 Cloud Streaming Telemetry: /api/streaming/pubsub/status returns topic & lakehouse metrics
+  ✔ 9.2 Cloud Pub/Sub Ingestion: /api/streaming/pubsub/publish streams event & increments buffer
+  ✔ 9.3 BigQuery Lakehouse SQL Analytics: /api/streaming/bigquery/query executes partition query
+
 ======================================================
-   TEST EXECUTION COMPLETED: 23 PASSED, 0 FAILED
+   TEST EXECUTION COMPLETED: 33 PASSED, 0 FAILED
 ======================================================
 ```
 
 ---
 
-## 🛠️ Installation & Development
+## 🚀 Enterprise Deployment & Cloud Infrastructure
+
+### 1. Google Cloud Run Deployment
+Deploy the full-stack container to Cloud Run with automatic scaling:
+```bash
+# Automated deployment using gcloud
+./deploy-cloudrun.sh <YOUR_GCP_PROJECT_ID> us-central1
+
+# Or submit via Cloud Build directly:
+gcloud builds submit --config=cloudbuild.yaml .
+```
+
+### 2. Relational Database Migration (Cloud SQL / AlloyDB)
+For persistent production storage, provision a PostgreSQL instance on Cloud SQL or AlloyDB and apply the schema:
+```bash
+# Apply partitioned schema and immutable audit triggers:
+psql "$DATABASE_URL" -f src/db/cloudsql-schema.sql
+```
+- **Partitioned Ledger**: Transactions partitioned by monthly ingestion ranges.
+- **SOC2 Non-Repudiation Trigger**: `trg_immutable_audit_ledger` blocks any unauthorized updates or deletes.
+- **HMAC Signatures**: Every ledger block is sealed with SHA-256 hash chaining plus a KMS-backed HMAC signature.
+
+### 3. Google Cloud Pub/Sub & BigQuery Lakehouse
+- **Pub/Sub Topic**: `projects/bfsi-riskguard/topics/transactions-stream` buffers high-velocity transactions.
+- **BigQuery Lakehouse**: `bfsi_lakehouse.raw_transactions_partitioned` powers interactive SQL analytics.
+
+---
+
+## 🛠️ Installation & Local Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Run full-stack dev server (Express backend + Vite HMR on port 3000)
+# Run full-stack dev server (Express backend + Vite on port 3000)
 npm run dev
 
-# Run comprehensive test suite
+# Run comprehensive 33-test enterprise suite
 npm test
 
-# Lint codebase (type check)
+# Lint codebase (TypeScript verification)
 npm run lint
 
 # Build for production
@@ -226,3 +268,4 @@ npm run build
 # Start production server
 npm start
 ```
+

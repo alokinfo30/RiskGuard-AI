@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TransactionRecord, DecisionStatus } from '../types/index.ts';
 import { CriticalRiskTrendChart } from './CriticalRiskTrendChart.tsx';
+import { LastHourCriticalInflowChart } from './LastHourCriticalInflowChart.tsx';
 import { RiskHeatmap } from './RiskHeatmap.tsx';
 import { 
   AlertTriangle, 
@@ -19,7 +20,8 @@ import {
   X,
   Layers,
   BarChart3,
-  Flame
+  Flame,
+  Zap
 } from 'lucide-react';
 
 interface FraudMonitoringQueueProps {
@@ -44,7 +46,7 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterBand, setFilterBand] = useState<string>('ALL');
-  const [surveillanceView, setSurveillanceView] = useState<'BOTH' | 'CHART_ONLY' | 'HEATMAP_ONLY'>('BOTH');
+  const [surveillanceView, setSurveillanceView] = useState<'LAST_HOUR' | '24H_TREND' | 'HEATMAP' | 'ALL'>('LAST_HOUR');
 
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -138,38 +140,39 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Surveillance Controls Bar (Toggle between 24h Trend Chart and Risk Heatmap) */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      {/* Surveillance Controls Bar (Toggle between 1h Inflow, 24h Trend Chart, Risk Heatmap, or All) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
             Surveillance Visualizers:
           </span>
-          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
             <button
-              onClick={() => setSurveillanceView('BOTH')}
-              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                surveillanceView === 'BOTH'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+              onClick={() => setSurveillanceView('LAST_HOUR')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                surveillanceView === 'LAST_HOUR'
+                  ? 'bg-rose-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              All Views
+              <Zap className="h-3 w-3 text-amber-300 animate-pulse" />
+              <span>Last 1h Inflow (Live)</span>
             </button>
             <button
-              onClick={() => setSurveillanceView('CHART_ONLY')}
+              onClick={() => setSurveillanceView('24H_TREND')}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                surveillanceView === 'CHART_ONLY'
+                surveillanceView === '24H_TREND'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
               <BarChart3 className="h-3 w-3" />
-              <span>24h Trend Chart</span>
+              <span>24h Velocity Trend</span>
             </button>
             <button
-              onClick={() => setSurveillanceView('HEATMAP_ONLY')}
+              onClick={() => setSurveillanceView('HEATMAP')}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                surveillanceView === 'HEATMAP_ONLY'
+                surveillanceView === 'HEATMAP'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -177,17 +180,43 @@ export const FraudMonitoringQueue: React.FC<FraudMonitoringQueueProps> = ({
               <Flame className="h-3 w-3" />
               <span>Risk Heatmap</span>
             </button>
+            <button
+              onClick={() => setSurveillanceView('ALL')}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
+                surveillanceView === 'ALL'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              All Visualizers
+            </button>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onTriggerTick}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors shadow-sm"
+            title="Inject simulated Kafka transaction stream event"
+          >
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            <span>Simulate Stream Tick</span>
+          </button>
         </div>
       </div>
 
-      {/* 24-Hour Critical Risk Anomaly Frequency Chart (Integrated via Recharts) */}
-      {(surveillanceView === 'BOTH' || surveillanceView === 'CHART_ONLY') && (
+      {/* Real-Time Last 1-Hour Critical Risk Inflow Line Chart (Recharts) */}
+      {(surveillanceView === 'LAST_HOUR' || surveillanceView === 'ALL') && (
+        <LastHourCriticalInflowChart transactions={transactions} />
+      )}
+
+      {/* 24-Hour Critical Risk Anomaly Frequency Chart */}
+      {(surveillanceView === '24H_TREND' || surveillanceView === 'ALL') && (
         <CriticalRiskTrendChart transactions={transactions} />
       )}
 
       {/* Risk Heatmap: Location x Hour of Day Heatmap Dashboard Card */}
-      {(surveillanceView === 'BOTH' || surveillanceView === 'HEATMAP_ONLY') && (
+      {(surveillanceView === 'HEATMAP' || surveillanceView === 'ALL') && (
         <RiskHeatmap transactions={transactions} />
       )}
 

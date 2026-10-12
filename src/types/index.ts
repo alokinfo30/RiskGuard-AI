@@ -30,4 +30,6 @@ export interface AuditRecord {
   timestamp: string;
   falsePositive: boolean;
   scoreAtDecision: number;
+  prevHash?: string;
+  hash?: string;
 }

@@ -8,7 +8,9 @@ import {
   Radio, 
   Bell, 
   Volume2, 
-  VolumeX 
+  VolumeX,
+  Menu,
+  X
 } from 'lucide-react';
 import { AlertSettingsPanel, AlertConfig } from './AlertSettingsPanel.tsx';
 import avatarImg from '../assets/images/avatar_compliance_lead_1791140102843.jpg';
@@ -37,6 +39,7 @@ export const Header: React.FC<HeaderProps> = ({
   setAlertConfig,
 }) => {
   const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
@@ -181,8 +184,104 @@ export const Header: React.FC<HeaderProps> = ({
               <p className="text-[10px] text-slate-400 leading-tight">Compliance Lead · MLRO</p>
             </div>
           </div>
+
+          {/* Mobile Navigation Hamburger Toggle */}
+          <button
+            onClick={() => setIsMobileMenuOpen((prev) => !prev)}
+            className="md:hidden flex items-center justify-center h-8 w-8 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+            aria-label="Toggle Navigation Menu"
+          >
+            {isMobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          </button>
         </div>
       </div>
+
+      {/* Mobile Navigation Slide-Down Drawer (Visible on phones and small tablets < md) */}
+      {isMobileMenuOpen && (
+        <div className="md:hidden border-t border-slate-800/90 bg-slate-950/98 px-4 py-3 space-y-1.5 shadow-2xl animate-in slide-in-from-top-2">
+          <button
+            onClick={() => {
+              setActiveTab('monitoring');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === 'monitoring'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4" />
+              <span>Fraud Stream</span>
+            </div>
+            {pendingCount > 0 && (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold">
+                {pendingCount} Pending
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('copilot');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === 'copilot'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Regulatory Copilot (FinCEN / FATF)</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('sandbox');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === 'sandbox'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            <span>Risk Simulator &amp; SHAP Waterfall</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('regulations');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === 'regulations'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <BookOpen className="h-4 w-4" />
+            <span>Statute Library &amp; Guidelines</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('audit');
+              setIsMobileMenuOpen(false);
+            }}
+            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              activeTab === 'audit'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-300 hover:bg-slate-900 hover:text-white'
+            }`}
+          >
+            <History className="h-4 w-4" />
+            <span>Audit Ledger &amp; SAR Pipeline</span>
+          </button>
+        </div>
+      )}
     </header>
   );
 };

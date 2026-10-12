@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import { REGULATORY_DATABASE, searchRegulatoryDatabase } from './src/data/regulatoryData.ts';
 import { INITIAL_TRANSACTIONS, computeRiskScore, type TransactionRecord } from './src/data/syntheticTransactions.ts';
@@ -11,7 +12,65 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+// Security Middleware: HTTP Hardening Headers (OWASP & SOC2 compliant)
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self'; frame-ancestors 'self';"
+  );
+  next();
+});
+
+// Enforce strict JSON payload limits to prevent buffer overflow/DDoS
+app.use(express.json({ limit: '250kb' }));
+
+// In-Memory Sliding Window Rate Limiter
+interface RateLimitBucket {
+  count: number;
+  resetTime: number;
+}
+const rateLimitStore = new Map<string, RateLimitBucket>();
+
+function createRateLimiter(maxRequests: number, windowMs: number = 60000) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown-client';
+    const key = `${req.baseUrl || req.path}_${ip}`;
+    const now = Date.now();
+    const bucket = rateLimitStore.get(key);
+
+    if (!bucket || now > bucket.resetTime) {
+      rateLimitStore.set(key, { count: 1, resetTime: now + windowMs });
+      return next();
+    }
+
+    if (bucket.count >= maxRequests) {
+      const retryAfter = Math.ceil((bucket.resetTime - now) / 1000);
+      res.setHeader('Retry-After', retryAfter.toString());
+      return res.status(429).json({
+        error: 'Too Many Requests — Rate limit exceeded for compliance security.',
+        retryAfterSeconds: retryAfter,
+      });
+    }
+
+    bucket.count += 1;
+    next();
+  };
+}
+
+// Input Sanitization utility
+function sanitizeInput(str: unknown, maxLen = 1000): string {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/[<>]/g, '') // Strip script injection tags
+    .trim()
+    .slice(0, maxLen);
+}
 
 // Initialize Google GenAI with required telemetry headers
 const apiKey = process.env.GEMINI_API_KEY;
@@ -30,8 +89,8 @@ if (apiKey) {
 // In-memory transaction state with Kaggle PaySim simulation store
 let activeTransactions: TransactionRecord[] = [...INITIAL_TRANSACTIONS];
 
-// In-memory compliance audit decision log
-interface AuditEntry {
+// In-memory compliance audit decision log with SHA-256 Cryptographic Hash Chaining
+export interface AuditEntry {
   id: string;
   transactionId: string;
   action: string;
@@ -40,19 +99,123 @@ interface AuditEntry {
   timestamp: string;
   falsePositive: boolean;
   scoreAtDecision: number;
+  prevHash: string;
+  hash: string;
 }
+
+const GENESIS_PREV_HASH = "0000000000000000000000000000000000000000000000000000000000000000";
+
+export function computeEntryHash(entry: Omit<AuditEntry, 'hash'>): string {
+  const payload = `${entry.id}|${entry.prevHash}|${entry.timestamp}|${entry.transactionId}|${entry.action}|${entry.reason}|${entry.analyst}|${entry.scoreAtDecision}|${entry.falsePositive}`;
+  return crypto.createHash('sha256').update(payload).digest('hex');
+}
+
+const genesisInitial: Omit<AuditEntry, 'hash'> = {
+  id: "AUD-101",
+  transactionId: "TX-7802-PS",
+  action: "APPROVED",
+  reason: "Established supplier invoice payment, statutory CTR Form 112 logged automatically.",
+  analyst: "Sarah Jenkins (Senior Compliance VP)",
+  timestamp: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
+  falsePositive: false,
+  scoreAtDecision: 18,
+  prevHash: GENESIS_PREV_HASH,
+};
+
 let auditTrail: AuditEntry[] = [
   {
-    id: "AUD-101",
-    transactionId: "TX-7802-PS",
-    action: "APPROVED",
-    reason: "Established supplier invoice payment, statutory CTR Form 112 logged automatically.",
-    analyst: "Sarah Jenkins (Senior Compliance VP)",
-    timestamp: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-    falsePositive: false,
-    scoreAtDecision: 18,
+    ...genesisInitial,
+    hash: computeEntryHash(genesisInitial),
   }
 ];
+
+// Helper to verify entire cryptographic hash chain
+export function verifyAuditTrailIntegrity(): {
+  isValid: boolean;
+  totalEntries: number;
+  verifiedEntries: number;
+  genesisHash: string;
+  latestHash: string;
+  tamperedEntryId?: string;
+  timestamp: string;
+} {
+  if (auditTrail.length === 0) {
+    return {
+      isValid: true,
+      totalEntries: 0,
+      verifiedEntries: 0,
+      genesisHash: GENESIS_PREV_HASH,
+      latestHash: GENESIS_PREV_HASH,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // auditTrail is ordered newest-first (index 0 is newest, index length-1 is genesis)
+  for (let i = 0; i < auditTrail.length; i++) {
+    const entry = auditTrail[i];
+    const expectedHash = computeEntryHash({
+      id: entry.id,
+      transactionId: entry.transactionId,
+      action: entry.action,
+      reason: entry.reason,
+      analyst: entry.analyst,
+      timestamp: entry.timestamp,
+      falsePositive: entry.falsePositive,
+      scoreAtDecision: entry.scoreAtDecision,
+      prevHash: entry.prevHash,
+    });
+
+    if (entry.hash !== expectedHash) {
+      return {
+        isValid: false,
+        totalEntries: auditTrail.length,
+        verifiedEntries: i,
+        genesisHash: auditTrail[auditTrail.length - 1].hash,
+        latestHash: auditTrail[0].hash,
+        tamperedEntryId: entry.id,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    // Verify linkage to older entry
+    if (i < auditTrail.length - 1) {
+      const olderEntry = auditTrail[i + 1];
+      if (entry.prevHash !== olderEntry.hash) {
+        return {
+          isValid: false,
+          totalEntries: auditTrail.length,
+          verifiedEntries: i,
+          genesisHash: auditTrail[auditTrail.length - 1].hash,
+          latestHash: auditTrail[0].hash,
+          tamperedEntryId: entry.id,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    } else {
+      // Oldest entry must link to GENESIS_PREV_HASH
+      if (entry.prevHash !== GENESIS_PREV_HASH) {
+        return {
+          isValid: false,
+          totalEntries: auditTrail.length,
+          verifiedEntries: i,
+          genesisHash: auditTrail[auditTrail.length - 1].hash,
+          latestHash: auditTrail[0].hash,
+          tamperedEntryId: entry.id,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+  }
+
+  return {
+    isValid: true,
+    totalEntries: auditTrail.length,
+    verifiedEntries: auditTrail.length,
+    genesisHash: auditTrail[auditTrail.length - 1].hash,
+    latestHash: auditTrail[0].hash,
+    timestamp: new Date().toISOString(),
+  };
+}
 
 // API: Get regulations catalog
 app.get('/api/regulations/library', (req, res) => {
@@ -70,12 +233,14 @@ app.get('/api/regulations/search', (req, res) => {
   res.json({ results });
 });
 
-// API: Copilot Regulatory RAG Chat
-app.post('/api/regulatory/chat', async (req, res) => {
+// API: Copilot Regulatory RAG Chat (Rate limited: 30 req/min)
+app.post('/api/regulatory/chat', createRateLimiter(30), async (req, res) => {
   try {
-    const { query, category = 'ALL', strictCitations = true } = req.body;
+    const rawQuery = req.body?.query;
+    const category = sanitizeInput(req.body?.category || 'ALL', 50);
+    const query = sanitizeInput(rawQuery, 1200);
     if (!query) {
-      return res.status(400).json({ error: 'Query is required' });
+      return res.status(400).json({ error: 'Query text is required (max 1200 characters)' });
     }
 
     // 1. Retrieve top matching regulatory documents from our legal knowledge base
@@ -159,12 +324,13 @@ Provide an authoritative, structured compliance advisory answering the question.
   }
 });
 
-// API: Draft Suspicious Activity Report (SAR) Part V Narrative
-app.post('/api/regulatory/draft-sar', async (req, res) => {
+// API: Draft Suspicious Activity Report (SAR) Part V Narrative (Rate limited: 30 req/min)
+app.post('/api/regulatory/draft-sar', createRateLimiter(30), async (req, res) => {
   try {
-    const { transaction, investigatorNotes } = req.body;
-    if (!transaction) {
-      return res.status(400).json({ error: 'Transaction record is required to draft SAR' });
+    const { transaction } = req.body;
+    const investigatorNotes = sanitizeInput(req.body?.investigatorNotes || '', 2000);
+    if (!transaction || !transaction.id) {
+      return res.status(400).json({ error: 'Valid transaction record is required to draft SAR' });
     }
 
     const tx = transaction as TransactionRecord;
@@ -275,54 +441,85 @@ app.get('/api/transactions', (req, res) => {
   });
 });
 
-// API: Human-in-the-Loop decision override
-app.post('/api/decisions/override', (req, res) => {
+const ALLOWED_COMPLIANCE_ACTIONS = ['APPROVED', 'STEP_UP_KYC', 'ACCOUNT_FROZEN', 'SAR_FILED'];
+
+// API: Human-in-the-Loop decision override (Rate limited: 60 req/min)
+app.post('/api/decisions/override', createRateLimiter(60), (req, res) => {
   const { transactionId, action, reason, analyst, falsePositive = false } = req.body;
   if (!transactionId || !action) {
     return res.status(400).json({ error: 'transactionId and action are required' });
   }
 
+  if (!ALLOWED_COMPLIANCE_ACTIONS.includes(action)) {
+    return res.status(400).json({ 
+      error: `Invalid compliance action. Allowed values: ${ALLOWED_COMPLIANCE_ACTIONS.join(', ')}` 
+    });
+  }
+
   const txIndex = activeTransactions.findIndex(t => t.id === transactionId);
   if (txIndex === -1) {
-    return res.status(404).json({ error: 'Transaction not found' });
+    return res.status(404).json({ error: 'Transaction not found in active surveillance ledger' });
   }
+
+  const sanitizedReason = sanitizeInput(reason || 'Adjudicated per standard operating procedure', 500);
+  const sanitizedAnalyst = sanitizeInput(analyst || 'Compliance Officer (Reviewer #402)', 100);
 
   const tx = activeTransactions[txIndex];
   tx.status = action;
   tx.analystDecision = {
     action,
-    note: reason || 'Reviewed and adjudicated by compliance officer.',
+    note: sanitizedReason,
     timestamp: new Date().toISOString(),
-    analyst: analyst || 'Compliance Officer (Reviewer #402)',
-    falsePositiveMarked: falsePositive,
+    analyst: sanitizedAnalyst,
+    falsePositiveMarked: Boolean(falsePositive),
   };
 
-  const auditEntry: AuditEntry = {
+  // Cryptographic backward hash link: link to current top of auditTrail (or Genesis)
+  const prevHash = auditTrail.length > 0 ? auditTrail[0].hash : GENESIS_PREV_HASH;
+  const auditEntryPayload: Omit<AuditEntry, 'hash'> = {
     id: `AUD-${Date.now().toString().slice(-5)}`,
     transactionId,
     action,
-    reason: reason || 'Adjudicated per standard operating procedure',
-    analyst: analyst || 'Compliance Officer (Reviewer #402)',
+    reason: sanitizedReason,
+    analyst: sanitizedAnalyst,
     timestamp: new Date().toISOString(),
-    falsePositive,
+    falsePositive: Boolean(falsePositive),
     scoreAtDecision: tx.riskScore,
+    prevHash,
   };
+
+  const auditEntry: AuditEntry = {
+    ...auditEntryPayload,
+    hash: computeEntryHash(auditEntryPayload),
+  };
+
   auditTrail.unshift(auditEntry);
 
   res.json({ success: true, transaction: tx, auditEntry });
 });
 
-// API: Bulk Human-in-the-Loop decision override
-app.post('/api/decisions/bulk-override', (req, res) => {
+// API: Bulk Human-in-the-Loop decision override (Rate limited: 30 req/min)
+app.post('/api/decisions/bulk-override', createRateLimiter(30), (req, res) => {
   const { transactionIds, action, reason, analyst, falsePositive = false } = req.body;
   if (!Array.isArray(transactionIds) || transactionIds.length === 0 || !action) {
     return res.status(400).json({ error: 'transactionIds array and action are required' });
   }
 
+  if (!ALLOWED_COMPLIANCE_ACTIONS.includes(action)) {
+    return res.status(400).json({ 
+      error: `Invalid compliance action. Allowed values: ${ALLOWED_COMPLIANCE_ACTIONS.join(', ')}` 
+    });
+  }
+
+  if (transactionIds.length > 100) {
+    return res.status(400).json({ error: 'Batch threshold exceeded. Maximum 100 transactions per bulk override.' });
+  }
+
   const updatedTxs: TransactionRecord[] = [];
   const newAuditEntries: AuditEntry[] = [];
   const now = new Date().toISOString();
-  const operator = analyst || 'Compliance Officer (Reviewer #402)';
+  const sanitizedReason = sanitizeInput(reason || `Bulk ${action} applied across ${transactionIds.length} records`, 500);
+  const operator = sanitizeInput(analyst || 'Compliance Officer (Reviewer #402)', 100);
 
   for (const id of transactionIds) {
     const tx = activeTransactions.find(t => t.id === id);
@@ -330,24 +527,37 @@ app.post('/api/decisions/bulk-override', (req, res) => {
       tx.status = action;
       tx.analystDecision = {
         action,
-        note: reason || `Bulk adjudicated: ${action}`,
+        note: sanitizedReason,
         timestamp: now,
         analyst: operator,
-        falsePositiveMarked: falsePositive,
+        falsePositiveMarked: Boolean(falsePositive),
       };
       updatedTxs.push(tx);
 
-      const entry: AuditEntry = {
+      // Link to previous audit entry in this batch or top of auditTrail
+      const prevHash = newAuditEntries.length > 0 
+        ? newAuditEntries[0].hash 
+        : (auditTrail.length > 0 ? auditTrail[0].hash : GENESIS_PREV_HASH);
+
+      const entryPayload: Omit<AuditEntry, 'hash'> = {
         id: `AUD-B${Math.floor(Math.random() * 89999 + 10000)}`,
         transactionId: id,
         action,
-        reason: reason || `Bulk ${action} applied across ${transactionIds.length} records`,
+        reason: sanitizedReason,
         analyst: operator,
         timestamp: now,
-        falsePositive,
+        falsePositive: Boolean(falsePositive),
         scoreAtDecision: tx.riskScore,
+        prevHash,
       };
-      newAuditEntries.push(entry);
+
+      const entry: AuditEntry = {
+        ...entryPayload,
+        hash: computeEntryHash(entryPayload),
+      };
+
+      // Unshift into batch so index 0 is newest
+      newAuditEntries.unshift(entry);
     }
   }
 
@@ -358,6 +568,27 @@ app.post('/api/decisions/bulk-override', (req, res) => {
     updatedCount: updatedTxs.length,
     transactions: updatedTxs,
     auditEntries: newAuditEntries,
+  });
+});
+
+// API: Verify Cryptographic Audit Trail Integrity
+app.get('/api/decisions/verify-integrity', (req, res) => {
+  const integrity = verifyAuditTrailIntegrity();
+  res.json(integrity);
+});
+
+// API: Security Health & Posture Overview
+app.get('/api/security/health', (req, res) => {
+  const integrity = verifyAuditTrailIntegrity();
+  res.json({
+    status: integrity.isValid ? 'SECURE' : 'COMPROMISED',
+    cspActive: true,
+    rateLimitingActive: true,
+    auditLedgerIntegrity: integrity.isValid,
+    totalAuditEntries: auditTrail.length,
+    hashingAlgorithm: 'SHA-256',
+    verifiedEntries: integrity.verifiedEntries,
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -485,7 +716,11 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// Only start standalone server if this file is executed directly (not imported as a module in tests)
+const isDirectExecution = process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.js'));
+if (isDirectExecution) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

@@ -303,7 +303,7 @@ export default function App() {
 
         {activeTab === 'regulations' && <RegulatoryLibrary />}
 
-        {activeTab === 'audit' && <AuditGovernanceLog />}
+        {activeTab === 'audit' && <AuditGovernanceLog transactions={transactions} />}
       </main>
 
       {/* Transaction Details & Human Adjudication Modal */}

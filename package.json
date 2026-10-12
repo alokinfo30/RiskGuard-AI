@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx tests/run-all-tests.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

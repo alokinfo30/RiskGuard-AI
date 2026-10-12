@@ -4,7 +4,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { REGULATORY_DATABASE, searchRegulatoryDatabase } from './src/data/regulatoryData.ts';
-import { INITIAL_TRANSACTIONS, computeRiskScore, TransactionRecord } from './src/data/syntheticTransactions.ts';
+import { INITIAL_TRANSACTIONS, computeRiskScore, type TransactionRecord } from './src/data/syntheticTransactions.ts';
 
 dotenv.config();
 

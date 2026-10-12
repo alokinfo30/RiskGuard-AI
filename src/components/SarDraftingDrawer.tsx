@@ -75,6 +75,24 @@ export const SarDraftingDrawer: React.FC<SarDraftingDrawerProps> = ({
     };
   }, [transaction, investigatorNotes]);
 
+  // Keyboard shortcut listener: Cmd+Enter to sign off and file SAR, Esc to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        if (!isGenerating && narrative) {
+          e.preventDefault();
+          onMarkFiled(transaction.id, narrative);
+          onClose();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [transaction, narrative, isGenerating, onMarkFiled, onClose]);
+
   const handleCopy = () => {
     navigator.clipboard.writeText(narrative);
     setCopied(true);
@@ -212,10 +230,13 @@ export const SarDraftingDrawer: React.FC<SarDraftingDrawerProps> = ({
                 onClose();
               }}
               disabled={isGenerating || !narrative}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition-colors"
             >
               <ShieldCheck className="h-4 w-4" />
               <span>Sign Off &amp; Mark SAR As Filed</span>
+              <kbd className="px-1.5 py-0.2 rounded bg-indigo-700 text-indigo-100 text-[10px] font-mono">
+                ⌘↵
+              </kbd>
             </button>
           </div>
         </div>

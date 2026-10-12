@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { computeRiskScore } from '../src/data/syntheticTransactions.ts';
 import { REGULATORY_DATABASE, searchRegulatoryDatabase } from '../src/data/regulatoryData.ts';
 import { 
+  app,
   AuditEntry, 
   computeEntryHash, 
   verifyAuditTrailIntegrity 
@@ -25,6 +26,15 @@ async function test(name: string, fn: () => void | Promise<void>) {
 }
 
 async function runAllTests() {
+  let inProcessServer: any = null;
+  try {
+    const probe = await fetch('http://localhost:3000/api/security/health', { signal: AbortSignal.timeout(1200) });
+    if (!probe.ok) throw new Error('Server unready');
+  } catch (e) {
+    inProcessServer = app.listen(3000);
+    await new Promise((r) => setTimeout(r, 600));
+  }
+
   console.log('\n======================================================');
   console.log('   RISKGUARD AI — ENTERPRISE REGULATORY & SECURITY TEST SUITE');
   console.log('======================================================\n');
@@ -319,12 +329,304 @@ async function runAllTests() {
     assert.ok(data.transaction.device, 'Must include device and network telemetry');
   });
 
+  console.log('\n\x1b[1m[SUITE 5: CUSTOMER ALERT & 2-WAY PROTECTION TESTS]\x1b[0m');
+
+  await test('5.1 Customer Alerts Ledger: /api/customer-alerts returns active alerts and count', async () => {
+    const res = await fetch('http://localhost:3000/api/customer-alerts');
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(Array.isArray(data.alerts), 'Alerts must be an array');
+    assert.ok(typeof data.total === 'number');
+    assert.ok(typeof data.pendingCount === 'number');
+  });
+
+  let testAlertId = '';
+  await test('5.2 Alert Dispatch: /api/customer-alerts/dispatch sends personalized customer warning', async () => {
+    const res = await fetch('http://localhost:3000/api/customer-alerts/dispatch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'TX-7802-PS',
+        channel: 'SMS',
+        customMessage: 'Test Security Verification Alert',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.ok(data.alert.id.startsWith('CAL-'));
+    assert.equal(data.alert.contactChannel, 'SMS');
+    assert.equal(data.alert.status, 'PENDING_RESPONSE');
+    testAlertId = data.alert.id;
+  });
+
+  await test('5.3 2-Way Customer Verification: Customer response updates alert status', async () => {
+    assert.ok(testAlertId, 'Test alert must exist');
+    const res = await fetch('http://localhost:3000/api/customer-alerts/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        alertId: testAlertId,
+        response: 'CONFIRMED',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.equal(data.alert.status, 'CUSTOMER_VERIFIED');
+    assert.ok(data.alert.responseTimestamp);
+  });
+
+  console.log('\n\x1b[1m[SUITE 6: DOCUMENT AI FINANCIAL FORENSICS & SAR EXHIBITS]\x1b[0m');
+
+  await test('6.1 Document AI Forensics: /api/documents/analyze extracts entities & generates findings', async () => {
+    const sampleDoc = `COMMERCIAL INVOICE #INV-8821\nVendor: Global Freight Logistics\nTotal: USD $12,500.00\nDate: 2026-10-05`;
+    const res = await fetch('http://localhost:3000/api/documents/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentName: 'Commercial Freight Invoice',
+        documentType: 'INVOICE',
+        documentText: sampleDoc,
+        transactionId: 'TX-7802-PS',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.id.startsWith('DOC-AI-'));
+    assert.ok(data.extractedEntities);
+    assert.ok(typeof data.documentTrustScore === 'number');
+    assert.ok(['LOW_RISK', 'MODERATE_DISCREPANCY', 'HIGH_FORGERY_RISK'].includes(data.riskCategory));
+    assert.ok(data.summaryFindings.length > 0);
+    assert.ok(data.sarExhibitNarrative.includes('EXHIBIT') || data.sarExhibitNarrative.length > 20);
+  });
+
+  await test('6.2 Document AI Multilingual Detection & Translation: Spanish Invoice FAC-2026-0941', async () => {
+    const spanishDoc = `FACTURA COMERCIAL DE FLETE MARÍTIMO\nNúmero: FAC-2026-0941\nEmisor: Trans-Atlantic Naviera Marítima S.L.\nNIF: ES-B84992104\nMonto Total: EUR €9.800,00\nDestinatario: Andina Importaciones S.A.`;
+    const res = await fetch('http://localhost:3000/api/documents/detect-translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentName: 'Spanish Freight Invoice',
+        documentText: spanishDoc,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.equal(data.translation.detectedLanguageCode, 'es');
+    assert.equal(data.translation.isTranslated, true);
+    assert.ok(data.translation.confidence >= 0.95);
+    assert.ok(data.translation.translatedEnglishText.includes('COMMERCIAL MARITIME FREIGHT INVOICE') || data.translation.translatedEnglishText.length > 50);
+    assert.ok(Array.isArray(data.translation.bilingualFieldMappings));
+    assert.ok(data.translation.bilingualFieldMappings.length > 0);
+  });
+
+  await test('6.3 Document AI German Equipment Pro-Forma Invoice: Auto-translates & extracts entities', async () => {
+    const germanDoc = `PROFORMA-RECHNUNG FÜR INDUSTRIEANLAGEN\nRechnungsnummer: PRO-DE-88319\nLieferant: Norddeutsche Präzision Maschinenbau GmbH\nGesamtbetrag: EUR €54.500,00\nEmpfänger: Gulf Apex Heavy Industrial Equipment FZE`;
+    const res = await fetch('http://localhost:3000/api/documents/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentName: 'German Proforma Invoice',
+        documentType: 'INVOICE',
+        documentText: germanDoc,
+        transactionId: 'TX-7802-PS',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.translation);
+    assert.equal(data.translation.detectedLanguageCode, 'de');
+    assert.equal(data.translation.isTranslated, true);
+    assert.ok(data.extractedEntities.invoiceAmount === 59200 || data.extractedEntities.invoiceAmount === 54500 || data.extractedEntities.vendorName);
+  });
+
+  await test('6.4 Document AI Chinese Maritime Bill of Lading: Ingestion & TBML discrepancy analysis', async () => {
+    const chineseDoc = `国际海运提单及商业发票\n单证编号: SH-OC-2026-9901\n发货人: 上海东海航运物流有限公司\n申报总金额: USD $14,800.00\n统一社会信用代码: 9131000078923412X8`;
+    const res = await fetch('http://localhost:3000/api/documents/detect-translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentName: 'Chinese Bill of Lading',
+        documentText: chineseDoc,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.translation.detectedLanguageCode, 'zh');
+    assert.equal(data.translation.isTranslated, true);
+    assert.ok(data.translation.translatedEnglishText.includes('INTERNATIONAL MARITIME BILL OF LADING') || data.translation.translatedEnglishText.length > 50);
+  });
+
+  console.log('\n\x1b[1m[SUITE 7: HTTP SECURITY POSTURE & OWASP DEFENSES]\x1b[0m');
+
+  await test('7.1 OWASP Security Headers: Response contains CSP, nosniff, and frame hardening', async () => {
+    const res = await fetch('http://localhost:3000/api/security/health');
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
+    assert.ok(res.headers.get('content-security-policy'));
+  });
+
+  console.log('\n\x1b[1m[SUITE 8: FINCEN BSA ELECTRONIC FILING & STATUTORY CITATIONS]\x1b[0m');
+
+  await test('8.1 FinCEN SAR Part V Drafting: /api/regulatory/draft-sar produces compliant audit narrative', async () => {
+    const sampleTx = {
+      id: 'TX-7802-PS',
+      timestamp: new Date().toISOString(),
+      type: 'TRANSFER',
+      amount: 9850,
+      currency: 'USD',
+      nameOrig: 'C102931 (Mule Originator)',
+      origAccountType: 'INDIVIDUAL',
+      origCustomerTenureMonths: 2,
+      oldbalanceOrg: 10000,
+      newbalanceOrig: 150,
+      nameDest: 'C994102 (Crypto Hub Escrow)',
+      destAccountType: 'CRYPTO_EXCHANGE',
+      destAccountAgeDays: 1,
+      oldbalanceDest: 0,
+      newbalanceDest: 9850,
+      riskScore: 89,
+      riskBand: 'CRITICAL',
+      fraudFlags: ['MULE_STRUCTURING_CTR_EVASION', 'ACCOUNT_BALANCE_DRAINED_TO_NEAR_ZERO'],
+      device: {
+        ip: '185.220.101.5',
+        geoCountry: 'Romania',
+        city: 'Bucharest',
+        isVpnOrTor: true,
+        deviceFingerprintTrust: 18,
+      },
+    };
+
+    const res = await fetch('http://localhost:3000/api/regulatory/draft-sar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transaction: sampleTx,
+        investigatorNotes: 'Automated rapid mule drain structuring detected.',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.sarNarrative);
+    assert.ok(data.sarNarrative.length > 250);
+    assert.ok(data.filingMetadata);
+    assert.equal(data.filingMetadata.reportType, 'FinCEN Form 111 (Suspicious Activity Report)');
+  });
+
+  await test('8.2 FinCEN BSA Electronic Filing Conformance: /api/regulatory/validate-sar-filing validates criteria', async () => {
+    const res = await fetch('http://localhost:3000/api/regulatory/validate-sar-filing', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'TX-7802-PS',
+        narrative: 'Chronological FinCEN Form 111 Part V Narrative: Originator initiated structured transfer of $9,850 to newly formed beneficiary entity to evade mandatory Currency Transaction Report thresholds under 31 CFR § 1020.320. Detailed forensic investigation confirms high-anonymity proxy and depleted balance.',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.isValid, true);
+    assert.ok(data.readinessScore >= 80);
+    assert.ok(Array.isArray(data.passedChecks));
+    assert.ok(data.bsnBatchId.startsWith('BSN-'));
+  });
+
+  await test('8.3 FinCEN Electronic Batch Export: /api/regulatory/export-fincen-batch returns XML/JSON package', async () => {
+    const res = await fetch('http://localhost:3000/api/regulatory/export-fincen-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transactionId: 'TX-7802-PS',
+        narrative: 'Compliance test narrative.',
+        format: 'JSON',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.fincenBatchHeader);
+    assert.equal(data.fincenBatchHeader.schemaVersion, '2.0.FinCEN.BSA');
+    assert.ok(data.cryptographicVerification);
+  });
+
+  await test('8.4 Statutory Citation Grounding: /api/regulatory/verify-citations verifies codified rules', async () => {
+    const res = await fetch('http://localhost:3000/api/regulatory/verify-citations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'This activity triggers mandatory reporting under 31 CFR § 1020.320 and FATF Recommendation 16 for cross-border wires.',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.isGrounded, true);
+    assert.ok(data.groundingScore >= 80);
+    assert.ok(['ZERO', 'LOW'].includes(data.hallucinationRisk));
+    assert.ok(data.verifiedCitations.length >= 2);
+  });
+
+  console.log('\n\x1b[1m[SUITE 9: GOOGLE CLOUD STREAMING & BIGQUERY LAKEHOUSE]\x1b[0m');
+
+  await test('9.1 Cloud Streaming Telemetry: /api/streaming/pubsub/status returns topic & lakehouse metrics', async () => {
+    const res = await fetch('http://localhost:3000/api/streaming/pubsub/status');
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.pubsub);
+    assert.ok(data.pubsub.topic.includes('transactions-stream'));
+    assert.ok(data.pubsub.publishedEventsCount > 0);
+    assert.ok(data.bigquery);
+    assert.ok(data.bigquery.totalRowsIngested > 0);
+  });
+
+  await test('9.2 Cloud Pub/Sub Ingestion: /api/streaming/pubsub/publish streams event & increments buffer', async () => {
+    const res = await fetch('http://localhost:3000/api/streaming/pubsub/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        eventPayload: {
+          test: 'CI_INGESTION_EVENT',
+          timestamp: new Date().toISOString(),
+        },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    assert.ok(data.eventId.startsWith('PS-EVT-'));
+    assert.ok(data.ackId.startsWith('ACK-'));
+    assert.ok(typeof data.streamingBufferOffset === 'number');
+  });
+
+  await test('9.3 BigQuery Lakehouse SQL Analytics: /api/streaming/bigquery/query executes partition query', async () => {
+    const res = await fetch('http://localhost:3000/api/streaming/bigquery/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: 'SELECT risk_band, COUNT(*) as count FROM bfsi_lakehouse.raw_transactions_partitioned GROUP BY 1',
+      }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.ok(data.jobId.startsWith('bqjob_'));
+    assert.ok(Array.isArray(data.rows));
+    assert.ok(data.rows.length > 0);
+    assert.ok(typeof data.executionTimeMs === 'number');
+    assert.ok(data.bytesScannedFormatted);
+  });
+
   console.log('\n======================================================');
   console.log(`   TEST EXECUTION COMPLETED: \x1b[32m${passedCount} PASSED\x1b[0m, \x1b[31m${failedCount} FAILED\x1b[0m`);
   console.log('======================================================\n');
 
+  if (inProcessServer) {
+    inProcessServer.close();
+  }
+
   if (failedCount > 0) {
     process.exit(1);
+  } else {
+    process.exit(0);
   }
 }
 

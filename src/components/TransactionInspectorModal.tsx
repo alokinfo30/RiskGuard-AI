@@ -46,6 +46,25 @@ export const TransactionInspectorModal: React.FC<TransactionInspectorModalProps>
     setIsSubmitting(false);
   };
 
+  // Keyboard shortcut handler (Cmd+Enter to commit decision / draft SAR, Esc to close)
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (selectedAction === 'SAR_FILED') {
+          onDraftSar(transaction, rationale);
+        } else {
+          handleSubmitDecision();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [transaction, selectedAction, rationale, falsePositive]);
+
   const isCritical = transaction.riskBand === 'CRITICAL';
   const isHigh = transaction.riskBand === 'HIGH';
 
@@ -392,9 +411,12 @@ export const TransactionInspectorModal: React.FC<TransactionInspectorModalProps>
                 type="button"
                 onClick={handleSubmitDecision}
                 disabled={isSubmitting}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 shadow-sm transition-colors"
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 shadow-sm transition-colors"
               >
-                Commit Compliance Adjudication
+                <span>Commit Compliance Adjudication</span>
+                <kbd className="px-1.5 py-0.2 rounded bg-indigo-700 text-indigo-100 text-[10px] font-mono">
+                  ⌘↵
+                </kbd>
               </button>
             </div>
           </div>

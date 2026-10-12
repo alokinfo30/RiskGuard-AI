@@ -7,6 +7,11 @@ import { SarDraftingDrawer } from './components/SarDraftingDrawer.tsx';
 import { RiskSandbox } from './components/RiskSandbox.tsx';
 import { RegulatoryLibrary } from './components/RegulatoryLibrary.tsx';
 import { AuditGovernanceLog } from './components/AuditGovernanceLog.tsx';
+import { CustomerAlertsHub } from './components/CustomerAlertsHub.tsx';
+import { DocumentAiReviewer } from './components/DocumentAiReviewer.tsx';
+import { CloudLakehousePipeline } from './components/CloudLakehousePipeline.tsx';
+import { CommandPaletteModal } from './components/CommandPaletteModal.tsx';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal.tsx';
 import { TransactionRecord, DecisionStatus } from './types/index.ts';
 import { INITIAL_TRANSACTIONS } from './data/syntheticTransactions.ts';
 import { AlertConfig } from './components/AlertSettingsPanel.tsx';
@@ -20,6 +25,9 @@ export default function App() {
   const [sarTx, setSarTx] = useState<TransactionRecord | null>(null);
   const [sarNotes, setSarNotes] = useState<string>('');
   const [isLiveStreaming, setIsLiveStreaming] = useState<boolean>(true);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
+  const [customerAlertsPendingCount, setCustomerAlertsPendingCount] = useState<number>(1);
   const [toastMessage, setToastMessage] = useState<{
     text: string;
     isCritical?: boolean;
@@ -69,8 +77,22 @@ export default function App() {
     }
   };
 
+  // Fetch customer alerts count
+  const fetchCustomerAlertsCount = async () => {
+    try {
+      const res = await fetch('/api/customer-alerts');
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.pendingCount === 'number') {
+          setCustomerAlertsPendingCount(data.pendingCount);
+        }
+      }
+    } catch (e) {}
+  };
+
   useEffect(() => {
     fetchTransactions();
+    fetchCustomerAlertsCount();
   }, []);
 
   // Alert handler on new transaction arrival
@@ -135,6 +157,81 @@ export default function App() {
     }
   };
 
+  // Global Keyboard Shortcuts Hook
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing inside an input or textarea
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isInput = targetTag === 'input' || targetTag === 'textarea' || targetTag === 'select';
+
+      // Cmd+K or Ctrl+K: Open Command Palette
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      // Esc: Close any open modal
+      if (e.key === 'Escape') {
+        if (isCommandPaletteOpen) {
+          setIsCommandPaletteOpen(false);
+          return;
+        }
+        if (isShortcutsModalOpen) {
+          setIsShortcutsModalOpen(false);
+          return;
+        }
+        if (selectedTx) {
+          setSelectedTx(null);
+          return;
+        }
+        if (sarTx) {
+          setSarTx(null);
+          return;
+        }
+      }
+
+      // ? key: Open Keyboard Shortcuts Sheet (when not typing in input)
+      if (e.key === '?' && !isInput && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setIsShortcutsModalOpen(true);
+        return;
+      }
+
+      // Cmd+1 to Cmd+8 tab shortcuts
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (e.key === '1') {
+          e.preventDefault();
+          setActiveTab('monitoring');
+        } else if (e.key === '2') {
+          e.preventDefault();
+          setActiveTab('alerts');
+        } else if (e.key === '3') {
+          e.preventDefault();
+          setActiveTab('documents');
+        } else if (e.key === '4') {
+          e.preventDefault();
+          setActiveTab('lakehouse');
+        } else if (e.key === '5') {
+          e.preventDefault();
+          setActiveTab('copilot');
+        } else if (e.key === '6') {
+          e.preventDefault();
+          setActiveTab('sandbox');
+        } else if (e.key === '7') {
+          e.preventDefault();
+          setActiveTab('regulations');
+        } else if (e.key === '8') {
+          e.preventDefault();
+          setActiveTab('audit');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [isCommandPaletteOpen, isShortcutsModalOpen, selectedTx, sarTx]);
+
   // Human-in-the-loop adjudication handler
   const handleAdjudicate = async (
     txId: string,
@@ -150,7 +247,7 @@ export default function App() {
           transactionId: txId,
           action,
           reason,
-          analyst: 'Sarah Jenkins (Compliance Lead · MLRO)',
+          analyst: 'Sarah Jenkins (Senior Compliance VP)',
           falsePositive: isFalsePositive,
         }),
       });
@@ -161,96 +258,83 @@ export default function App() {
           prev.map((t) => (t.id === txId ? data.transaction : t))
         );
         setSelectedTx(null);
-        showToast(
-          isFalsePositive
-            ? `Decision logged: ${txId} marked as False Positive. Sent to retraining.`
-            : `Compliance Adjudication logged for ${txId}: ${action}`
-        );
+        showToast(`Case ${txId} adjudicated: ${action.replace(/_/g, ' ')}`);
+        fetchCustomerAlertsCount();
       }
     } catch (e) {
-      showToast('Failed to save compliance decision');
+      showToast(`Adjudication failure for ${txId}`);
     }
   };
 
   // Bulk Human-in-the-loop adjudication handler
   const handleBulkAdjudicate = async (
-    transactionIds: string[],
+    txIds: string[],
     action: DecisionStatus,
-    reason: string,
-    isFalsePositive: boolean
+    reason: string
   ) => {
     try {
       const res = await fetch('/api/decisions/bulk-override', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transactionIds,
+          transactionIds: txIds,
           action,
           reason,
-          analyst: 'Sarah Jenkins (Compliance Lead · MLRO)',
-          falsePositive: isFalsePositive,
+          analyst: 'Sarah Jenkins (Senior Compliance VP)',
+          falsePositive: false,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        const updatedIds = new Set(transactionIds);
+        const updatedMap = new Map<string, TransactionRecord>(
+          (data.transactions || []).map((t: TransactionRecord) => [t.id, t])
+        );
+
         setTransactions((prev) =>
-          prev.map((t) => {
-            if (updatedIds.has(t.id)) {
-              return {
-                ...t,
-                status: action,
-                analystDecision: {
-                  action,
-                  note: reason,
-                  timestamp: new Date().toISOString(),
-                  analyst: 'Sarah Jenkins (Compliance Lead · MLRO)',
-                  falsePositiveMarked: isFalsePositive,
-                },
-              };
-            }
-            return t;
-          })
+          prev.map((t) => (updatedMap.has(t.id) ? updatedMap.get(t.id)! : t))
         );
-        showToast(
-          `Bulk adjudication executed: ${transactionIds.length} transactions updated to ${action}.`
-        );
+
+        showToast(`Bulk Adjudication: ${txIds.length} transactions set to ${action}`);
+        fetchCustomerAlertsCount();
       }
     } catch (e) {
-      showToast('Failed to execute bulk adjudication');
+      showToast(`Bulk adjudication failure`);
     }
   };
 
-  // SAR Filing sign-off handler
+  // Mark SAR filed handler
   const handleMarkFiled = async (txId: string, narrative: string) => {
     await handleAdjudicate(
       txId,
       'SAR_FILED',
-      'FinCEN Form 111 Part V Narrative drafted, verified, and officially submitted to Financial Crimes Enforcement Network.',
+      `FinCEN Form 111 Part V Narrative officially filed. Retained 5 years under BSA.\n${narrative.slice(0, 150)}...`,
       false
     );
-    showToast(`FinCEN SAR officially filed for case ${txId}`);
+    setSarTx(null);
   };
 
   const pendingCount = transactions.filter((t) => t.status === 'PENDING_REVIEW').length;
   const criticalCount = transactions.filter((t) => t.riskBand === 'CRITICAL').length;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      {/* Top Bar Contract (Wordmark, Nav Links, Profile/Actions & Alert Settings) */}
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200">
+      {/* Global Header */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         pendingCount={pendingCount}
         criticalCount={criticalCount}
+        customerAlertsPendingCount={customerAlertsPendingCount}
         isLiveStreaming={isLiveStreaming}
         setIsLiveStreaming={setIsLiveStreaming}
         alertConfig={alertConfig}
         setAlertConfig={setAlertConfig}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
       />
 
-      {/* Toast / Push Notification Banner */}
+      {/* Floating Critical Alert Toast Bar */}
       {toastMessage && (
         <div
           onClick={() => {
@@ -259,14 +343,20 @@ export default function App() {
               setToastMessage(null);
             }
           }}
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border p-3.5 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 cursor-pointer max-w-md ${
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border p-4 shadow-2xl backdrop-blur-md cursor-pointer transition-all transform animate-in slide-in-from-bottom-5 duration-300 max-w-md ${
             toastMessage.isCritical
-              ? 'border-rose-500/60 bg-rose-950/90 text-rose-100 ring-1 ring-rose-500/30'
-              : 'border-indigo-500/40 bg-slate-900/95 text-indigo-200'
+              ? 'border-rose-500/50 bg-rose-950/90 text-rose-100 shadow-rose-950/50'
+              : 'border-slate-800 bg-slate-900/90 text-slate-200'
           }`}
         >
           {toastMessage.isCritical ? (
-            <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0 animate-bounce" />
+            <div className="relative">
+              <AlertTriangle className="h-5 w-5 text-rose-400 shrink-0" />
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+              </span>
+            </div>
           ) : (
             <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
           )}
@@ -283,7 +373,7 @@ export default function App() {
       )}
 
       {/* Main Viewport Container */}
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-6">
         {activeTab === 'monitoring' && (
           <FraudMonitoringQueue
             transactions={transactions}
@@ -297,6 +387,30 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'alerts' && (
+          <CustomerAlertsHub
+            transactions={transactions}
+            onInspectTransaction={(tx) => setSelectedTx(tx)}
+            onRefreshTransactions={() => {
+              fetchTransactions();
+              fetchCustomerAlertsCount();
+            }}
+          />
+        )}
+
+        {activeTab === 'documents' && (
+          <DocumentAiReviewer
+            transactions={transactions}
+            onDraftSarWithExhibit={(tx, exhibit) => {
+              setSelectedTx(null);
+              setSarTx(tx);
+              setSarNotes(`[Document AI Forensic Exhibit Attached]\n${exhibit}`);
+            }}
+          />
+        )}
+
+        {activeTab === 'lakehouse' && <CloudLakehousePipeline />}
+
         {activeTab === 'copilot' && <RegulatoryCopilot />}
 
         {activeTab === 'sandbox' && <RiskSandbox />}
@@ -305,6 +419,27 @@ export default function App() {
 
         {activeTab === 'audit' && <AuditGovernanceLog transactions={transactions} />}
       </main>
+
+      {/* Global Command Palette (Cmd+K) */}
+      <CommandPaletteModal
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        transactions={transactions}
+        onSelectTransaction={(tx) => setSelectedTx(tx)}
+        onSelectTab={(tab) => setActiveTab(tab)}
+        onTriggerTick={handleTriggerTick}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+        onDraftSar={(tx) => {
+          setSarTx(tx);
+          setSarNotes('Triggered from global command palette.');
+        }}
+      />
+
+      {/* Keyboard Shortcuts Cheat Sheet Modal (?) */}
+      <KeyboardShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+      />
 
       {/* Transaction Details & Human Adjudication Modal */}
       {selectedTx && (
@@ -338,8 +473,14 @@ export default function App() {
             <span>·</span>
             <span>Autonomous Risk Scoring, Real-time Fraud Detection &amp; Regulatory Copilot</span>
           </div>
-          <div className="text-[11px] text-slate-500 font-mono">
-            Grounding: FinCEN 31 CFR · FATF 40 · PMLA 2002 · GDPR Art. 22
+          <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
+            <span>Grounding: FinCEN 31 CFR · FATF 40 · PMLA 2002 · GDPR Art. 22</span>
+            <button
+              onClick={() => setIsShortcutsModalOpen(true)}
+              className="text-indigo-400 hover:text-indigo-300 underline"
+            >
+              Shortcuts (?)
+            </button>
           </div>
         </div>
       </footer>
